@@ -1,4 +1,3 @@
-use std::boxed::FnBox;
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::iter;
@@ -21,8 +20,8 @@ use cocaine::service::locator::HashRing;
 use cocaine::service::tvm::{Grant, Tvm};
 use cocaine::service::unicorn::{Close, Unicorn, Version};
 
-use config::{Config, PoolConfig, ServicePoolConfig};
-use retry::Action;
+use crate::config::{Config, PoolConfig, ServicePoolConfig};
+use crate::retry::Action;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
@@ -33,7 +32,9 @@ pub struct Settings {
 pub enum Event {
     Service {
         name: String,
-        func: Box<FnBox(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send>,
+        // func: Box<dyn Fn(&Service, Settings) -> Box<dyn futures::future::Future>,
+        func: Box<dyn Fn(&Service, Settings) -> Box<dyn Future<Item = (), Error = ()> + Send> + Send>,
+     // func: Box< BoxFn(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send>,
     },
     OnServiceConnect(Service),
     OnRoutingUpdates(HashMap<String, HashRing>),
@@ -313,7 +314,7 @@ impl Future for PoolTask {
                             let handle = self.handle.clone();
                             let ref service = self.select_service(name, &handle);
 
-                            let future = func.call_box((service, settings));
+                            let future = func(service, settings);
                             handle.spawn(future);
                         }
                         Event::OnServiceConnect(service) => {
@@ -383,7 +384,7 @@ impl Action for RoutingGroupsAction {
             dispatcher: self.dispatcher.clone(),
             log: self.log.clone(),
             uuid: uuid,
-            stream: box stream,
+            stream: Box::new(stream),
         }
     }
 }
@@ -392,7 +393,7 @@ pub struct RoutingGroupsUpdateTask {
     dispatcher: EventDispatch,
     log: Logger,
     uuid: String,
-    stream: Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>,
+    stream: Box<dyn Stream<Item=HashMap<String, HashRing>, Error=Error>>,
 }
 
 impl Future for RoutingGroupsUpdateTask {
@@ -427,10 +428,10 @@ impl Future for RoutingGroupsUpdateTask {
     }
 }
 
-type SubscribeStream = Box<Stream<Item=(Option<HashMap<String, f64>>, Version), Error=Error> + Send>;
+type SubscribeStream = Box<dyn Stream<Item=(Option<HashMap<String, f64>>, Version), Error=Error> + Send>;
 
 enum SubscribeState {
-    Start(Box<Future<Item=(Close, SubscribeStream), Error=Error>>),
+    Start(Box<dyn Future<Item=(Close, SubscribeStream), Error=Error>>),
     Fetch(SubscribeStream),
 }
 
@@ -476,10 +477,10 @@ impl TicketFactory {
 impl Factory for TicketFactory {
     type Item = String;
     type Error = Error;
-    type Future = Box<Future<Item = Self::Item, Error = Error> + Send>;
+    type Future = Box<dyn Future<Item = Self::Item, Error = Error> + Send>;
 
     fn create(&mut self) -> Self::Future {
-        box self.tvm.ticket(self.client_id, &self.client_secret, &self.grant)
+        Box::new(self.tvm.ticket(self.client_id, &self.client_secret, &self.grant))
     }
 }
 

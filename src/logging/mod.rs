@@ -7,7 +7,7 @@ use hyper::server::Request;
 
 use cocaine::logging::{Filter, Log, Logger, LoggerContext, Severity};
 
-use config::{LoggingBaseConfig, LoggingConfig};
+use crate::config::{LoggingBaseConfig, LoggingConfig};
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -117,7 +117,7 @@ impl<L: Log> AccessLogger<L> {
         }
     }
 
-    pub fn commit(self, status: StatusCode, bytes_sent: u64, err: Option<&Error>) {
+    pub fn commit(self, status: StatusCode, bytes_sent: u64, err: Option<&dyn Error>) {
         let status: u16 = status.into();
         let elapsed = self.birth.elapsed();
         let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;

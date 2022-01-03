@@ -43,7 +43,7 @@ impl<T: Debug, E: Debug> error::Error for Error<T, E> {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::Operation(..) => None,
             Error::Timer(ref err) => Some(err),

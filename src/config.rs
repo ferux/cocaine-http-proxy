@@ -248,7 +248,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, Box<Error>> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, Box<dyn Error>> {
         let cfg = serde_yaml::from_reader(&File::open(path)?)?;
 
         Config::sanitize(&cfg)?;
@@ -256,7 +256,7 @@ impl Config {
         Ok(cfg)
     }
 
-    fn sanitize(cfg: &Config) -> Result<(), Box<Error>> {
+    fn sanitize(cfg: &Config) -> Result<(), Box<dyn Error>> {
         if let Some(0) = cfg.threads {
             return Err("number of worker threads must be a positive value (or absent)".into());
         }

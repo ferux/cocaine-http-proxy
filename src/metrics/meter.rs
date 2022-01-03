@@ -74,15 +74,28 @@ impl<C: Clock> RateMeter<C> {
 
         if elapsed > 5 {
             // Clock values should monotonically increase, so no ABA problem here is possible.
-            if self.prev.compare_and_swap(old, now - elapsed % 5, Ordering::Release) == old {
-                let ticks = elapsed / 5;
+            match self.prev.compare_exchange(old, now - elapsed % 5, Ordering::Release, Ordering::Release) {
+                Ok(value) if value == old => {
+                    let ticks = elapsed / 5;
 
-                for _ in 0..ticks {
-                    for rate in &self.rates {
-                        rate.tick();
+                    for _ in 0..ticks {
+                        for rate in &self.rates {
+                            rate.tick();
+                        }
                     }
-                }
-            }
+                },
+                _ => {},
+            };
+
+            // if self.prev.compare_and_swap(old, now - elapsed % 5, Ordering::Release) == old {
+            //     let ticks = elapsed / 5;
+
+            //     for _ in 0..ticks {
+            //         for rate in &self.rates {
+            //             rate.tick();
+            //         }
+            //     }
+            // }
         }
     }
 }

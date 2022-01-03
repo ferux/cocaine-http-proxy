@@ -19,10 +19,10 @@ use serde_json;
 use tokio_core::reactor::Handle;
 use tokio_service::Service;
 
-use Metrics;
-use config::Config;
-use logging::Loggers;
-use service::{ServiceFactory, ServiceFactorySpawn};
+use crate::Metrics;
+use crate::config::Config;
+use crate::logging::Loggers;
+use crate::service::{ServiceFactory, ServiceFactorySpawn};
 
 fn response_json<T: Serialize>(value: &T) -> Response {
     match serde_json::to_string(value) {

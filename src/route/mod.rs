@@ -67,7 +67,7 @@ pub trait Route: Send + Sync {
     fn process(&self, request: Request) -> Match<Self::Future>;
 }
 
-pub type HyperRoute = Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>;
+pub type HyperRoute = Arc<dyn Route<Future = Box<dyn Future<Item = Response, Error = hyper::Error>>>>;
 
 #[derive(Clone)]
 pub struct Router {
@@ -86,7 +86,7 @@ impl Router {
 
     /// Tries to process the request, returning a future on first route match. If none of them
     /// match, returns a ready future with `NotFound` HTTP status.
-    pub fn process(&self, mut req: Request) -> Box<Future<Item = Response, Error = hyper::Error>> {
+    pub fn process(&self, mut req: Request) -> Box<dyn Future<Item = Response, Error = hyper::Error>> {
         for route in &self.routes {
             match route.process(req) {
                 Match::Some(future) => return future,
@@ -94,7 +94,7 @@ impl Router {
             }
         }
 
-        box future::ok(Response::new().with_status(StatusCode::NotFound))
+        Box::new(future::ok(Response::new().with_status(StatusCode::NotFound)))
     }
 }
 

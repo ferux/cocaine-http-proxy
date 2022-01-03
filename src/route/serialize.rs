@@ -318,7 +318,7 @@ where
 #[cfg(test)]
 mod test {
     use hyper::{HttpVersion, Method};
-    use route::app::RequestMeta;
+    use crate::route::app::RequestMeta;
 
     use super::*;
 

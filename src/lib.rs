@@ -1,4 +1,4 @@
-#![feature(box_syntax, fnbox, integer_atomics, never_type)]
+// #![feature(box_syntax, fnbox, integer_atomics, never_type)]
 
 extern crate byteorder;
 #[macro_use]
@@ -112,7 +112,7 @@ pub struct Metrics {
     responses: ResponseMetrics,
 }
 
-pub fn run(config: Config) -> Result<(), Box<error::Error>> {
+pub fn run(config: Config) -> Result<(), Box<dyn error::Error>> {
     let locator_addrs = config.locators()
         .iter()
         .map(|&(addr, port)| SocketAddr::new(addr, port))

@@ -15,12 +15,12 @@ use cocaine::{Resolver, ServiceBuilder};
 use cocaine::service::Locator;
 use cocaine::logging::{Severity, Logger};
 
-use {Metrics, DEFAULT_LOCATOR_NAME};
-use config::Config;
-use metrics::{Meter, Count};
-use pool::{Event, PoolTask};
-use route::Router;
-use service::{ServiceFactory, ServiceFactorySpawn};
+use crate::{Metrics, DEFAULT_LOCATOR_NAME};
+use crate::config::Config;
+use crate::metrics::{Meter, Count};
+use crate::pool::{Event, PoolTask};
+use crate::route::Router;
+use crate::service::{ServiceFactory, ServiceFactorySpawn};
 
 pub struct ProxyService {
     addr: Option<SocketAddr>,
@@ -53,19 +53,19 @@ impl Service for ProxyService {
     type Request  = Request;
     type Response = Response;
     type Error    = hyper::Error;
-    type Future   = Box<Future<Item = Response, Error = Self::Error>>;
+    type Future   = Box<dyn Future<Item = Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         let metrics = self.metrics.clone();
 
         metrics.requests.mark(1);
-        box self.router.process(req).and_then(move |resp| {
+        Box::new(self.router.process(req).and_then(move |resp| {
             if resp.status().is_server_error() {
                 metrics.responses.c5xx.mark(1);
             }
 
             Ok(resp)
-        })
+        }))
     }
 }
 
@@ -120,7 +120,7 @@ impl<T> Service for TimeoutMiddleware<T>
     type Request  = T::Request;
     type Response = T::Response;
     type Error    = T::Error;
-    type Future   = Box<Future<Item = Self::Response, Error = Self::Error>>;
+    type Future   = Box<dyn Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
         let timeout = future::result(Timeout::new(self.timeout, &self.handle))

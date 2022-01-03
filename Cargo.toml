@@ -6,6 +6,7 @@ license = "MIT"
 description = "HTTP proxy for Cocaine APE Cloud"
 homepage = "https://github.com/cocaine/cocaine-http-proxy"
 repository = "https://github.com/cocaine/cocaine-http-proxy"
+edition = "2021"
 
 [dependencies]
 clap = "2"
@@ -36,7 +37,7 @@ regex = "0.2"
 #slog-stdlog = "1.1"
 #slog-envlogger = "0.5"
 
-cocaine = "0.9.1"
+cocaine = "0.9.2"
 rmp-serde = "0.13.3"
 
 # Hack for backward-compatibility with Cocaine on older MessagePack.

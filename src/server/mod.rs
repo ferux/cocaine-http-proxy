@@ -28,7 +28,7 @@ use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_service::Service;
 
 use net::Incoming;
-use service::{ServiceFactory, ServiceFactorySpawn};
+use crate::service::{ServiceFactory, ServiceFactorySpawn};
 
 const DEFAULT_NUM_THREADS: usize = 1;
 const DEFAULT_BACKLOG: i32 = 1024;
@@ -344,23 +344,18 @@ impl ServerGroup {
         let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
             let log = log.clone();
             let mut iter = dispatchers.into_iter().cycle();
-            Incoming::new(listener).for_each(move |accept| {
-                match accept {
-                    Ok((sock, addr)) => {
-                        let fd = unsafe { libc::dup(sock.as_raw_fd()) };
-                        if fd >= 0 {
-                            let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
-                            if let Err(..) = iter.next().expect("iterator is infinite").unbounded_send((cloned, addr)) {
-                                cocaine_log!(log, Severity::Error, "failed to schedule incoming TCP connection from {}", addr);
-                            }
-                        } else {
-                            let err = io::Error::last_os_error();
-                            cocaine_log!(log, Severity::Error, "failed to dup file descriptor: {}", err);
-                        }
+            
+            listener.incoming().for_each(move |accept| {
+                let (sock, addr) = accept;
+                let fd = unsafe { libc::dup(sock.as_raw_fd()) };
+                if fd >= 0 {
+                    let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
+                    if let Err(..) = iter.next().expect("iterator is infinite").unbounded_send((cloned, addr)) {
+                        cocaine_log!(log, Severity::Error, "failed to schedule incoming TCP connection from {}", addr);
                     }
-                    Err(err) => {
-                        cocaine_log!(log, Severity::Error, "failed to accept TCP connection: {}", err);
-                    }
+                } else {
+                    let err = io::Error::last_os_error();
+                    cocaine_log!(log, Severity::Error, "failed to dup file descriptor: {}", err);
                 }
 
                 Ok(())

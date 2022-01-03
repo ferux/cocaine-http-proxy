@@ -33,7 +33,7 @@ impl Incoming {
 
 impl Stream for Incoming {
     type Item = Result<(TcpStream, SocketAddr), Error>;
-    type Error = !;
+    type Error = Box<dyn std::error::Error>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match self.inner.accept() {

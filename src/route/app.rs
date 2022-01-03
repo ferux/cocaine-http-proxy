@@ -14,7 +14,7 @@ use futures::{self, Async, Future, Poll, Stream, future};
 use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
-use hyper::header::{Header, Headers};
+use hyper::header::{Headers, Header};
 use hyper::server::{Request, Response};
 
 use regex::Regex;
@@ -28,11 +28,11 @@ use cocaine::hpack::{self, Header as CocaineHeader};
 use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
-use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequestId, XTracingPolicy,
+use crate::common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequestId, XTracingPolicy,
     XCocaineApp, XErrorGeneratedBy};
-use logging::AccessLogger;
-use pool::{Event, EventDispatch, Settings};
-use route::{Match, Route, serialize};
+use crate::logging::AccessLogger;
+use crate::pool::{Event, EventDispatch, Settings};
+use crate::route::{Match, Route, serialize};
 
 fn pack_u64(v: u64) -> Vec<u8> {
     let mut buf = vec![0; 8];
@@ -41,7 +41,7 @@ fn pack_u64(v: u64) -> Vec<u8> {
 }
 
 trait Call {
-    type Call: Fn(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send;
+    type Call: Fn(&Service, Settings) -> Box<dyn Future<Item = (), Error = ()> + Send> + Send;
     type Future: Future<Item = Response, Error = Error>;
 
     /// Selects an appropriate service with its settings from the pool and
@@ -59,10 +59,11 @@ pub struct AppRoute<L> {
 
 impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
     pub fn new(dispatcher: EventDispatch, log: L) -> Self {
+        let header = XRequestId::header_name();
         Self {
             dispatcher: dispatcher,
             headers: HashMap::new(),
-            tracing_header: XRequestId::header_name().into(),
+            tracing_header: header.into(),
             regex: Regex::new("/([^/]*)/([^/?]*)(.*)").expect("invalid URI regex in app route"),
             log: log,
         }
@@ -125,14 +126,14 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
     }
 
     fn invoke(&self, service: String, event: String, req: Request, uri: String)
-        -> Box<Future<Item = Response, Error = Error>>
+        -> Box<dyn Future<Item = Response, Error = Error>>
     {
         let trace = if let Some(trace) = req.headers().get_raw(&self.tracing_header) {
             match XRequestId::parse_header(trace) {
                 Ok(v) => v.into(),
                 Err(..) => {
                     let err = Error::InvalidRequestIdHeader(self.tracing_header.clone());
-                    return box future::err(err)
+                    return Box::new(future::err(err))
                 }
             }
         } else {
@@ -172,12 +173,12 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                 }
             });
 
-        box future
+        Box::new(future)
     }
 }
 
 impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
-    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
+    type Future = Box<dyn Future<Item = Response, Error = hyper::Error>>;
 
     fn process(&self, req: Request) -> Match<Self::Future> {
         match self.extract_parameters(&req) {
@@ -196,7 +197,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
                 let resp = Response::new()
                     .with_status(err.code())
                     .with_body(err.to_string());
-                Match::Some(box future::ok(resp))
+                Match::Some(Box::new(future::ok(resp)))
             }
             None => Match::None(req),
         }
@@ -307,7 +308,7 @@ struct AppWithSafeRetry {
     request: Arc<AppRequest>,
     dispatcher: EventDispatch,
     headers: Vec<hpack::RawHeader>,
-    current: Option<Box<Future<Item=Option<(Response, u64)>, Error=Error> + Send>>,
+    current: Option<Box<dyn Future<Item=Option<(Response, u64)>, Error=Error> + Send>>,
     verbose: Arc<AtomicBool>,
     tracing_policy: TracingPolicy,
 }
@@ -347,13 +348,13 @@ impl AppWithSafeRetry {
         headers
     }
 
-    fn make_future(&self) -> Box<Future<Item=Option<(Response, u64)>, Error=Error> + Send> {
+    fn make_future(&self) -> Box<dyn Future<Item=Option<(Response, u64)>, Error=Error> + Send> {
         let (tx, rx) = oneshot::channel();
 
         let request = self.request.clone();
         let verbose = self.verbose.clone();
         let attempt = self.attempts;
-        let mut headers = self.headers.clone();
+        let headers = self.headers.clone();
 
         let manual_verbose = match self.tracing_policy {
             TracingPolicy::Auto => None,
@@ -362,7 +363,8 @@ impl AppWithSafeRetry {
 
         let ev = Event::Service {
             name: request.service.clone(),
-            func: box move |service: &Service, mut settings: Settings| {
+            func: Box::new(move |service: &Service, mut settings: Settings| {
+                let mut headers = headers.clone();
                 if let Some(true) = manual_verbose {
                     settings.verbose = true;
                 }
@@ -398,15 +400,15 @@ impl AppWithSafeRetry {
                     Ok(())
                 });
 
-                box future as Box<Future<Item = (), Error = ()> + Send>
-            }
+                // box future as Box<Future<Item = (), Error = ()> + Send>
+                Box::new(future)
+            }),
         };
 
         self.dispatcher.send(ev);
 
         let future = rx.map_err(|futures::Canceled| Error::Canceled);
-
-        box future
+        Box::new(future)
     }
 }
 
@@ -504,7 +506,7 @@ struct AppReadDispatch {
 }
 
 impl Dispatch for AppReadDispatch {
-    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
+    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<dyn Dispatch>> {
         match response.deserialize::<protocol::Streaming<rmps::RawRef>>().flatten() {
             // TODO: Support chunked transfer encoding.
             Ok(Some(data)) => {

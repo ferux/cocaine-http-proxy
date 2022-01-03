@@ -45,8 +45,8 @@ use serde_json::Value;
 use cocaine::{self, Dispatch, EventGraph, GraphNode, Service};
 use cocaine::logging::{Severity, Log};
 
-use pool::{Event, EventDispatch, Settings};
-use route::{Match, Route};
+use crate::pool::{Event, EventDispatch, Settings};
+use crate::route::{Match, Route};
 
 header! { (XJsonRpc, "X-Cocaine-JSON-RPC") => [i64] }
 
@@ -119,7 +119,7 @@ struct JsonDispatch {
 }
 
 impl Dispatch for JsonDispatch {
-    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
+    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<dyn Dispatch>> {
         let ty = response.ty();
         match self.graph.remove(&ty) {
             Some(graph) => {
@@ -174,7 +174,7 @@ impl Dispatch for JsonDispatch {
 
 impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
     fn call(call: Call, d: EventDispatch)
-        -> Box<Future<Item = Option<Output>, Error = hyper::Error> + Send>
+        -> Box<dyn Future<Item = Option<Output>, Error = hyper::Error> + Send>
     {
         match call {
             Call::MethodCall(call) => {
@@ -196,7 +196,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                     Some(..) | None => {
                                         let err = Error::invalid_params("'args' parameter is required and must be an array");
                                         let out = Output::from(Err(err), id, Some(Version::V2));
-                                        return box future::ok(Some(out))
+                                        return Box::new(future::ok(Some(out)))
                                     }
                                 }
                             }
@@ -208,12 +208,12 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 
                         let ev = Event::Service {
                             name: service,
-                            func: box move |service: &Service, _settings: Settings| {
+                            func: Box::new(|service: &Service, _settings: Settings| {
                                 let methods = match service.methods() {
                                     Some(methods) => methods,
                                     None => {
                                         let service = service.clone();
-                                        return box service.connect().then(move |result| {
+                                        return Box::new(service.connect().then(move |result| {
                                             match result {
                                                 Ok(()) => {
                                                     match service.methods() {
@@ -236,25 +236,25 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                                 }
                                             }
 
-                                            box future::ok(())
-                                        }) as Box<Future<Item = (), Error = ()> + Send>;
+                                            Box::new(future::ok(()))
+                                        })) as Box<dyn Future<Item = (), Error = ()> + Send>;
                                     }
                                 };
 
                                 Self::invoke(service, event, params, chunks, id, methods, tx)
-                            },
+                            }),
                         };
 
                         d.send(ev);
 
-                        box future
+                        Box::new(future
                             .and_then(move |resp| Ok(Some(resp)))
                             .map_err(|err| {
                                 hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err)))
-                            })
+                            }))
                     }
                     Err(err) => {
-                        box future::ok(Some(Output::from(Err(err), id, Some(Version::V2))))
+                        Box::new(future::ok(Some(Output::from(Err(err), id, Some(Version::V2)))))
                     }
                 }
             }
@@ -262,13 +262,13 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                 unimplemented!();
             }
             Call::Invalid(id) => {
-                box future::ok(Some(Output::invalid_request(id, Some(Version::V2))))
+                Box::new(future::ok(Some(Output::invalid_request(id, Some(Version::V2)))))
             }
         }
     }
 
     fn invoke(service: &Service, event: String, params: Option<Vec<Value>>, chunks: Option<Vec<Value>>, id: Id, methods: HashMap<u64, EventGraph>, tx: oneshot::Sender<Output>)
-        -> Box<Future<Item = (), Error = ()> + Send>
+        -> Box<dyn Future<Item = (), Error = ()> + Send>
     {
         let methods = methods.into_iter()
             .map(|(ty, graph)| (graph.name.to_string(), (ty, graph)))
@@ -291,7 +291,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                 let graph = graph.tx.clone();
                 let req = cocaine::Request::new(ty, &args).unwrap()
                     .add_headers(headers);
-                box service.call(req, dispatch).then(move |tx| {
+                Box::new(service.call(req, dispatch).then(move |tx| {
 //                    println!("After call");
                     let mut graph = &graph;
 
@@ -331,19 +331,19 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                     }
 
                     Ok(())
-                })
+                }))
             } else {
                 let req = cocaine::Request::new(ty, &[0u8; 0]).unwrap()
                     .add_headers(headers);
-                box service.call(req, dispatch).then(|tx| {
+                Box::new(service.call(req, dispatch).then(|tx| {
                     mem::drop(tx);
                     Ok(())
-                })
+                }))
             }
         } else {
             let out = Output::from(Err(Error::method_not_found()), id, Some(Version::V2));
             mem::drop(tx.send(out));
-            box future::ok(())
+            Box::new(future::ok(()))
         }
     }
 
@@ -369,7 +369,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 }
 
 impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
-    type Future = Box<Future<Item = HttpResponse, Error = hyper::Error>>;
+    type Future = Box<dyn Future<Item = HttpResponse, Error = hyper::Error>>;
 
     fn process(&self, req: HttpRequest) -> Match<Self::Future> {
         if req.headers().has::<XJsonRpc>() {
@@ -388,7 +388,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
                             .with_header(ContentType::json())
                             .with_header(ContentLength(body.len() as u64))
                             .with_body(body);
-                        return box future::ok(resp) as Box<Future<Item=HttpResponse, Error=hyper::Error>>;
+                        return Box::new(future::ok(resp)) as Box<dyn Future<Item=HttpResponse, Error=hyper::Error>>;
                     }
                 };
 
@@ -399,13 +399,13 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
                     Request::Batch(calls) => calls,
                 };
 
-                box stream::iter_ok(calls.into_iter())
+                Box::new(stream::iter_ok(calls.into_iter())
                     .and_then(move |call| Self::call(call, d.clone()))
                     .collect()
-                    .and_then(|resp| Ok(Self::make_response(resp)))
+                    .and_then(|resp| Ok(Self::make_response(resp))))
             });
 
-            Match::Some(box future)
+            Match::Some(Box::new(future))
         } else {
             Match::None(req)
         }
@@ -425,8 +425,8 @@ mod test {
 
     use cocaine::logging::{Severity, FilterResult, Log};
 
-    use pool::EventDispatch;
-    use route::Route;
+    use crate::pool::EventDispatch;
+    use crate::route::Route;
     use super::{JsonRpc, XJsonRpc};
 
     #[derive(Clone)]
@@ -463,7 +463,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::BadRequest, res.status());
@@ -486,7 +486,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
@@ -512,7 +512,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::BadRequest, res.status());
@@ -535,7 +535,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
@@ -558,7 +558,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
@@ -581,7 +581,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
@@ -608,7 +608,7 @@ mod test {
         let dispatch = EventDispatch::new(vec![tx]);
 
         let service = JsonRpc::new(dispatch, MockLogger);
-        let future: Box<Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
+        let future: Box<dyn Future<Item = Response, Error = hyper::Error>> = service.process(req).unwrap();
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
